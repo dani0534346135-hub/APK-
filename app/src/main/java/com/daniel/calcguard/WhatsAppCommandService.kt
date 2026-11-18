@@ -1,4 +1,4 @@
-﻿package com.daniel.calcguard
+package com.daniel.calcguard
 
 import android.app.Notification
 import android.app.RemoteInput
@@ -13,9 +13,20 @@ class WhatsAppCommandService : NotificationListenerService() {
         val pkg = sbn?.packageName ?: return
         if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
 
-        val extras = sbn.notification.extras
+        val notification = sbn.notification ?: return
+        // דילוג על התראת סיכום כללית ("X הודעות חדשות")
+        if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
+
+        val extras = notification.extras ?: return
         val sender = extras.getString(Notification.EXTRA_TITLE)?.trim() ?: return
-        val message = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim() ?: return
+
+        // חילוץ הטקסט האחרון (תומך גם בהודעות מרובות)
+        val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+        val message = if (!textLines.isNullOrEmpty()) {
+            textLines.last().toString().trim()
+        } else {
+            extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim() ?: return
+        }
 
         CommandExecutor.processIncomingCommand(this, sender, message) { replyText ->
             sendWhatsAppReply(sbn, replyText)
