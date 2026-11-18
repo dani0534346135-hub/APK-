@@ -1,4 +1,4 @@
-﻿package com.daniel.calcguard
+package com.daniel.calcguard
 
 import org.json.JSONArray
 import org.json.JSONObject
@@ -7,11 +7,18 @@ enum class ActionType(val displayName: String) {
     SEND_LOCATION("שלח מיקום GPS + סוללה"),
     PLAY_ALARM("הפעל אזעקה חזקה"),
     STOP_ALARM("כבה אזעקה"),
+    FLASHLIGHT_ON("הדלק פנס (LED)"),
+    FLASHLIGHT_OFF("כבה פנס (LED)"),
+    RINGER_NORMAL("העבר מצב שמע לצלצול רגיל"),
     GPS_ON("הפעל מיקום (GPS)"),
     GPS_OFF("כבה מיקום (GPS)"),
+    DATA_ON("הפעל נתונים סלולריים (ADB)"),
+    DATA_OFF("כבה נתונים סלולריים (ADB)"),
+    HOTSPOT_ON("הפעל נקודה חמה מקומית (Hotspot)"),
+    BATTERY_SAVER_ON("הפעל חיסכון בסוללה (ADB)"),
     MAKE_CALL("חייג למספר מוגדר (על רמקול)"),
     END_CALL("נתק שיחה פעילה"),
-    DEVICE_STATUS("שלח סטטוס סוללה"),
+    DEVICE_STATUS("שלח דוח סטטוס מלא (סוללה, טעינה, רשת)"),
     CUSTOM_REPLY("שלח הודעת אישור מותאמת")
 }
 
