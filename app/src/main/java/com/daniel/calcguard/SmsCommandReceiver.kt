@@ -1,10 +1,11 @@
-﻿package com.daniel.calcguard
+package com.daniel.calcguard
 
 import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.provider.Telephony
 import android.telephony.SmsManager
 import androidx.core.content.ContextCompat
@@ -25,13 +26,18 @@ class SmsCommandReceiver : BroadcastReceiver() {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun sendSmsReply(context: Context, destination: String, text: String) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS)
             != PackageManager.PERMISSION_GRANTED
         ) return
 
         try {
-            val smsManager = context.getSystemService(SmsManager::class.java)
+            val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                context.getSystemService(SmsManager::class.java)
+            } else {
+                SmsManager.getDefault()
+            }
             val parts = smsManager.divideMessage(text)
             smsManager.sendMultipartTextMessage(destination, null, parts, null, null)
         } catch (_: Exception) { }
