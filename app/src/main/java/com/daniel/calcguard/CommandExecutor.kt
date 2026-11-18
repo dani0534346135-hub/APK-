@@ -22,8 +22,6 @@ import android.os.Looper
 import android.provider.Settings
 import android.telecom.TelecomManager
 import androidx.core.content.ContextCompat
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
 
 object CommandExecutor {
 
@@ -202,25 +200,37 @@ object CommandExecutor {
 
     @SuppressLint("MissingPermission")
     private fun fetchAndSendLocation(context: Context, replyCallback: (String) -> Unit) {
-        val fusedClient = LocationServices.getFusedLocationProviderClient(context)
-        fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-            .addOnSuccessListener { location ->
-                val bat = getBattery(context)
-                if (location != null) {
-                    val link = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
-                    replyCallback("📍 מיקום נוכחי:\n$link\n🔋 סוללה: $bat%")
-                } else {
-                    val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-                    val last = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                        ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-                    if (last != null) {
-                        val link = "https://maps.google.com/?q=${last.latitude},${last.longitude}"
-                        replyCallback("📍 מיקום אחרון:\n$link\n🔋 סוללה: $bat%")
-                    } else {
-                        replyCallback("⚠️ ממתין לקליטת GPS, נסה שוב בעוד 10 שניות.\n🔋 סוללה: $bat%")
-                    }
-                }
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val bat = getBattery(context)
+
+        val bestLast = listOf(
+            LocationManager.GPS_PROVIDER,
+            LocationManager.NETWORK_PROVIDER,
+            LocationManager.PASSIVE_PROVIDER
+        ).mapNotNull { provider ->
+            try { lm.getLastKnownLocation(provider) } catch (_: Exception) { null }
+        }.maxByOrNull { it.time }
+
+        if (bestLast != null) {
+            val link = "https://maps.google.com/?q=${bestLast.latitude},${bestLast.longitude}"
+            replyCallback("📍 מיקום:\n$link\n🔋 סוללה: $bat%")
+            return
+        }
+
+        try {
+            val provider = if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                LocationManager.NETWORK_PROVIDER
+            } else {
+                LocationManager.GPS_PROVIDER
             }
+            @Suppress("DEPRECATION")
+            lm.requestSingleUpdate(provider, { loc ->
+                val link = "https://maps.google.com/?q=${loc.latitude},${loc.longitude}"
+                replyCallback("📍 מיקום נוכחי:\n$link\n🔋 סוללה: $bat%")
+            }, Looper.getMainLooper())
+        } catch (_: Exception) {
+            replyCallback("⚠️ לא הצלחתי למשוך מיקום. וודא שהרשאת מיקום מאושרת תמיד.\n🔋 סוללה: $bat%")
+        }
     }
 
     private fun playAlarm(context: Context) {
