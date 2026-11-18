@@ -1,15 +1,20 @@
-﻿package com.daniel.calcguard
+package com.daniel.calcguard
 
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraManager
 import android.location.LocationManager
 import android.media.AudioManager
 import android.media.Ringtone
 import android.media.RingtoneManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
@@ -23,6 +28,7 @@ import com.google.android.gms.location.Priority
 object CommandExecutor {
 
     private var activeRingtone: Ringtone? = null
+    private var hotspotReservation: WifiManager.LocalOnlyHotspotReservation? = null
 
     fun processIncomingCommand(
         context: Context,
@@ -55,6 +61,18 @@ object CommandExecutor {
                 stopAlarm()
                 replyCallback("🔇 האזעקה כובתה.")
             }
+            ActionType.FLASHLIGHT_ON -> {
+                val ok = setFlashlight(context, true)
+                replyCallback(if (ok) "🔦 הפנס הודלק." else "⚠️ לא ניתן להדליק את הפנס.")
+            }
+            ActionType.FLASHLIGHT_OFF -> {
+                val ok = setFlashlight(context, false)
+                replyCallback(if (ok) "🌑 הפנס כובה." else "⚠️ לא ניתן לכבות את הפנס.")
+            }
+            ActionType.RINGER_NORMAL -> {
+                setRingerNormal(context)
+                replyCallback("🔔 מצב השמע הועבר לצלצול רגיל בעוצמה גבוהה.")
+            }
             ActionType.GPS_ON -> {
                 setGpsState(context, true)
                 replyCallback("📍 ה-GPS הופעל.")
@@ -62,6 +80,24 @@ object CommandExecutor {
             ActionType.GPS_OFF -> {
                 setGpsState(context, false)
                 replyCallback("📴 ה-GPS כובה.")
+            }
+            ActionType.DATA_ON -> {
+                val ok = setMobileDataState(context, true)
+                if (ok) replyCallback("📶 הנתונים הסלולריים הופעלו.")
+                else replyCallback("⚠️ נכשלה הפעלת נתונים (וודא שהרשאת ADB פעילה).")
+            }
+            ActionType.DATA_OFF -> {
+                val ok = setMobileDataState(context, false)
+                if (ok) replyCallback("📵 הנתונים הסלולריים כובו.")
+                else replyCallback("⚠️ נכשל כיבוי נתונים (וודא שהרשאת ADB פעילה).")
+            }
+            ActionType.HOTSPOT_ON -> {
+                startLocalHotspot(context, replyCallback)
+            }
+            ActionType.BATTERY_SAVER_ON -> {
+                val ok = setBatterySaver(context, true)
+                if (ok) replyCallback("🪫 מצב חיסכון בסוללה הופעל.")
+                else replyCallback("⚠️ נכשלה הפעלת חיסכון בסוללה (וודא שהרשאת ADB פעילה).")
             }
             ActionType.MAKE_CALL -> {
                 val number = matchedRule.extraText.trim()
@@ -78,8 +114,7 @@ object CommandExecutor {
                 else replyCallback("⚠️ אין שיחה פעילה לניתוק או שההרשאה חסרה.")
             }
             ActionType.DEVICE_STATUS -> {
-                val bat = getBattery(context)
-                replyCallback("📊 סטטוס מכשיר:\n🔋 סוללה: $bat%")
+                replyCallback(getFullDeviceStatus(context))
             }
             ActionType.CUSTOM_REPLY -> {
                 val txt = matchedRule.extraText.ifEmpty { "✅ הפקודה בוצעה בהצלחה." }
@@ -88,11 +123,81 @@ object CommandExecutor {
         }
     }
 
+    private fun setFlashlight(context: Context, enable: Boolean): Boolean {
+        return try {
+            val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val cameraId = cm.cameraIdList.firstOrNull() ?: return false
+            cm.setTorchMode(cameraId, enable)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun setRingerNormal(context: Context) {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.ringerMode = AudioManager.RINGER_MODE_NORMAL
+            val maxRing = am.getStreamMaxVolume(AudioManager.STREAM_RING)
+            am.setStreamVolume(AudioManager.STREAM_RING, maxRing, 0)
+        } catch (_: Exception) { }
+    }
+
+    private fun setBatterySaver(context: Context, enable: Boolean): Boolean {
+        return try {
+            Settings.Global.putInt(context.contentResolver, "low_power", if (enable) 1 else 0)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun setGpsState(context: Context, enable: Boolean) {
         try {
             val mode = if (enable) Settings.Secure.LOCATION_MODE_HIGH_ACCURACY else Settings.Secure.LOCATION_MODE_OFF
             Settings.Secure.putInt(context.contentResolver, Settings.Secure.LOCATION_MODE, mode)
         } catch (_: Exception) { }
+    }
+
+    private fun setMobileDataState(context: Context, enable: Boolean): Boolean {
+        return try {
+            Settings.Global.putInt(context.contentResolver, "mobile_data", if (enable) 1 else 0)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startLocalHotspot(context: Context, replyCallback: (String) -> Unit) {
+        try {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            hotspotReservation?.close()
+            wifiManager.startLocalOnlyHotspot(object : WifiManager.LocalOnlyHotspotCallback() {
+                override fun onStarted(reservation: WifiManager.LocalOnlyHotspotReservation?) {
+                    hotspotReservation = reservation
+                    val ssid = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        reservation?.softApConfiguration?.ssid ?: "AndroidAP"
+                    } else {
+                        @Suppress("DEPRECATION")
+                        reservation?.wifiConfiguration?.SSID ?: "AndroidAP"
+                    }
+                    val pass = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        reservation?.softApConfiguration?.passphrase ?: ""
+                    } else {
+                        @Suppress("DEPRECATION")
+                        reservation?.wifiConfiguration?.preSharedKey ?: ""
+                    }
+                    replyCallback("📡 נקודה חמה הופעלה!\nשם רשת: $ssid\nסיסמה: $pass")
+                }
+
+                override fun onFailed(reason: Int) {
+                    replyCallback("⚠️ הפעלת נקודה חמה נכשלה (קוד: $reason). וודא שהרשאת המיקום מאושרת.")
+                }
+            }, Handler(Looper.getMainLooper()))
+        } catch (e: Exception) {
+            replyCallback("⚠️ שגיאה בהפעלת נקודה חמה: ${e.message}")
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -168,5 +273,24 @@ object CommandExecutor {
     private fun getBattery(context: Context): Int {
         val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
         return bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    }
+
+    private fun getFullDeviceStatus(context: Context): String {
+        val bat = getBattery(context)
+        val batteryStatus = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+        val chargeStr = if (isCharging) "בטעינה ⚡" else "לא בטעינה"
+
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+        val netStr = when {
+            caps == null -> "אין חיבור רשת"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi 📶"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "רשת סלולרית 📡"
+            else -> "מחובר"
+        }
+
+        return "📊 דוח מצב מכשיר:\n🔋 סוללה: $bat% ($chargeStr)\n🌐 חיבור: $netStr"
     }
 }
